@@ -1,0 +1,544 @@
+diff -Naur qt-org/qtbase/mkspecs/common/gcc-base-unix.conf qt/qtbase/mkspecs/common/gcc-base-unix.conf
+--- qt-org/qtbase/mkspecs/common/gcc-base-unix.conf	2015-05-29 13:30:39.000000000 -0700
++++ qt/qtbase/mkspecs/common/gcc-base-unix.conf	2018-04-19 11:29:09.842108000 -0700
+@@ -16,7 +16,7 @@
+ QMAKE_LFLAGS_THREAD    +=
+ QMAKE_LFLAGS_RPATH      = -Wl,-rpath,
+ QMAKE_LFLAGS_RPATHLINK  = -Wl,-rpath-link,
+-QMAKE_LFLAGS_USE_GOLD   = -fuse-ld=gold
++QMAKE_LFLAGS_USE_GOLD   = 
+ 
+ # -Bsymbolic-functions (ld) support
+ QMAKE_LFLAGS_BSYMBOLIC_FUNC = -Wl,-Bsymbolic-functions
+diff -Naur qt-org/qtbase/mkspecs/features/qpa/genericunixfontdatabase.prf qt/qtbase/mkspecs/features/qpa/genericunixfontdatabase.prf
+--- qt-org/qtbase/mkspecs/features/qpa/genericunixfontdatabase.prf	2015-05-29 13:30:39.000000000 -0700
++++ qt/qtbase/mkspecs/features/qpa/genericunixfontdatabase.prf	2018-05-02 05:20:08.743471000 -0700
+@@ -2,7 +2,6 @@
+ contains(QT_CONFIG, fontconfig) {
+     DEFINES += Q_FONTCONFIGDATABASE
+     LIBS += -lfontconfig
+-} else:!android {
+     fonts.path = $$[QT_INSTALL_LIBS]/fonts
+     fonts.files = $$QT_SOURCE_TREE/lib/fonts/*
+     INSTALLS += fonts
+diff -Naur qt-org/qtbase/src/corelib/io/qfilesystemiterator_p.h qt/qtbase/src/corelib/io/qfilesystemiterator_p.h
+--- qt-org/qtbase/src/corelib/io/qfilesystemiterator_p.h	2015-05-29 13:30:38.000000000 -0700
++++ qt/qtbase/src/corelib/io/qfilesystemiterator_p.h	2018-04-19 11:29:09.842108000 -0700
+@@ -85,6 +85,7 @@
+     int uncShareIndex;
+     bool onlyDirs;
+ #else
++    int fd;
+     QT_DIR *dir;
+     QT_DIRENT *dirEntry;
+ #if defined(_POSIX_THREAD_SAFE_FUNCTIONS) && !defined(Q_OS_CYGWIN) || defined(QT_EXT_QNX_READDIR_R)
+diff -Naur qt-org/qtbase/src/corelib/io/qfilesystemiterator_unix.cpp qt/qtbase/src/corelib/io/qfilesystemiterator_unix.cpp
+--- qt-org/qtbase/src/corelib/io/qfilesystemiterator_unix.cpp	2015-05-29 13:30:38.000000000 -0700
++++ qt/qtbase/src/corelib/io/qfilesystemiterator_unix.cpp	2018-04-19 11:29:09.842108000 -0700
+@@ -44,6 +44,7 @@
+ QFileSystemIterator::QFileSystemIterator(const QFileSystemEntry &entry, QDir::Filters filters,
+                                          const QStringList &nameFilters, QDirIterator::IteratorFlags flags)
+     : nativePath(entry.nativeFilePath())
++    , fd(0)
+     , dir(0)
+     , dirEntry(0)
+ #if defined(Q_OS_QNX) && defined(__EXT_QNX__READDIR_R)
+@@ -54,8 +55,8 @@
+     Q_UNUSED(filters)
+     Q_UNUSED(nameFilters)
+     Q_UNUSED(flags)
+-
+-    if ((dir = QT_OPENDIR(nativePath.constData())) == 0) {
++    
++    if ((dir = fdopendir((fd = QT_OPEN(nativePath.constData(), O_RDONLY|O_NONBLOCK|O_LARGEFILE|O_DIRECTORY)))) == 0) {
+         lastError = errno;
+     } else {
+ 
+@@ -89,6 +90,8 @@
+ 
+ QFileSystemIterator::~QFileSystemIterator()
+ {
++    if(fd) 
++	QT_CLOSE(fd);
+     if (dir)
+         QT_CLOSEDIR(dir);
+ }
+diff -Naur qt-org/qtbase/src/corelib/io/qfsfileengine_unix.cpp qt/qtbase/src/corelib/io/qfsfileengine_unix.cpp
+--- qt-org/qtbase/src/corelib/io/qfsfileengine_unix.cpp	2015-05-29 13:30:38.000000000 -0700
++++ qt/qtbase/src/corelib/io/qfsfileengine_unix.cpp	2018-04-19 11:29:09.842108000 -0700
+@@ -90,7 +90,7 @@
+ 
+ #if defined(__GLIBC__) && (__GLIBC__ * 0x100 + __GLIBC_MINOR__) >= 0x0207
+     // must be glibc >= 2.7
+-    mode += 'e';
++    //mode += 'e';
+ #endif
+ 
+     return mode;
+@@ -120,7 +120,7 @@
+         if ((mode & QFile::Truncate) || !(mode & QFile::ReadOnly))
+             oflags |= QT_OPEN_TRUNC;
+     }
+-
++    
+     return oflags;
+ }
+ 
+diff -Naur qt-org/qtbase/src/corelib/kernel/qcore_unix_p.h qt/qtbase/src/corelib/kernel/qcore_unix_p.h
+--- qt-org/qtbase/src/corelib/kernel/qcore_unix_p.h	2015-05-29 13:30:37.000000000 -0700
++++ qt/qtbase/src/corelib/kernel/qcore_unix_p.h	2018-04-19 11:29:09.842108000 -0700
+@@ -160,7 +160,7 @@
+ static inline int qt_safe_open(const char *pathname, int flags, mode_t mode = 0777)
+ {
+ #ifdef O_CLOEXEC
+-    flags |= O_CLOEXEC;
++   // flags |= O_CLOEXEC;
+ #endif
+     int fd;
+     EINTR_LOOP(fd, QT_OPEN(pathname, flags, mode));
+@@ -188,7 +188,7 @@
+     int ret;
+ #if QT_UNIX_SUPPORTS_THREADSAFE_CLOEXEC && defined(O_CLOEXEC)
+     // use pipe2
+-    flags |= O_CLOEXEC;
++    //flags |= O_CLOEXEC;
+     ret = ::pipe2(pipefd, flags); // pipe2 is Linux-specific and is documented not to return EINTR
+     if (ret == 0 || errno != ENOSYS)
+         return ret;
+diff -Naur qt-org/qtbase/src/corelib/tools/qbytearray.cpp qt/qtbase/src/corelib/tools/qbytearray.cpp
+--- qt-org/qtbase/src/corelib/tools/qbytearray.cpp	2015-05-29 13:30:37.000000000 -0700
++++ qt/qtbase/src/corelib/tools/qbytearray.cpp	2018-04-25 04:53:37.834798000 -0700
+@@ -4127,7 +4127,11 @@
+     char c;
+     while (i < len) {
+         c = inputPtr[i];
+-        if (c == percent && i + 2 < len) {
++	int x = inputPtr[i + 1];
++	int y = inputPtr[i + 2];
++	if (c == percent && i + 2 < len && 
++         ((x >= '0' && x <= '9') || (x >= 'a' && x <= 'f') || (x >= 'A' && x <= 'F')) &&
++         ((y >= '0' && y <= '9') || (y >= 'a' && y <= 'f') || (y >= 'A' && y <= 'F'))) {       
+             a = inputPtr[++i];
+             b = inputPtr[++i];
+ 
+diff -Naur qt-org/qtbase/src/gui/painting/qdrawhelper.cpp qt/qtbase/src/gui/painting/qdrawhelper.cpp
+--- qt-org/qtbase/src/gui/painting/qdrawhelper.cpp	2015-05-29 13:30:36.000000000 -0700
++++ qt/qtbase/src/gui/painting/qdrawhelper.cpp	2018-05-31 06:28:34.201639000 -0700
+@@ -492,6 +492,13 @@
+ static const uint *QT_FASTCALL convertIndexedToARGB32PM(uint *buffer, const uint *src, int count,
+                                                         const QPixelLayout *, const QRgb *clut)
+ {
++    if (!clut) {
++      fprintf(stderr, "%s: TODO REMOVE convertIndexedToARGB32PM clut is NULL, skipping\n", __FUNCTION__);
++      for (int i = 0; i < count; ++i) {
++        buffer[i] = 0;
++      }
++      return buffer;
++    }
+     for (int i = 0; i < count; ++i)
+         buffer[i] = qPremultiply(clut[src[i]]);
+     return buffer;
+diff -Naur qt-org/qtbase/src/network/access/qnetworkreplyhttpimpl.cpp qt/qtbase/src/network/access/qnetworkreplyhttpimpl.cpp
+--- qt-org/qtbase/src/network/access/qnetworkreplyhttpimpl.cpp	2015-05-29 13:30:28.000000000 -0700
++++ qt/qtbase/src/network/access/qnetworkreplyhttpimpl.cpp	2018-10-14 22:24:02.009235000 -0700
+@@ -461,7 +461,10 @@
+     3) Calculate if response_is_fresh and if so send the cache and set loadedFromCache to true
+  */
+ bool QNetworkReplyHttpImplPrivate::loadFromCacheIfAllowed(QHttpNetworkRequest &httpRequest)
+-{
++{   
++    if(synchronous) 
++        return false;
++
+     QNetworkRequest::CacheLoadControl CacheLoadControlAttribute =
+         (QNetworkRequest::CacheLoadControl)request.attribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferNetwork).toInt();
+     if (CacheLoadControlAttribute == QNetworkRequest::AlwaysNetwork) {
+@@ -1127,7 +1130,8 @@
+     // is it a redirection?
+     checkForRedirect(statusCode);
+ 
+-    if (statusCode >= 500 && statusCode < 600) {
++    //Disabled caching response for 5xx http response code. It results request to timeout as don't emits finished signal.
++    /*if (statusCode >= 500 && statusCode < 600) {
+         QAbstractNetworkCache *nc = managerPrivate->networkCache;
+         if (nc) {
+             QNetworkCacheMetaData metaData = nc->metaData(request.url());
+@@ -1144,7 +1148,7 @@
+             if (!mustReValidate && sendCacheContents(metaData))
+                 return;
+         }
+-    }
++    }*/
+ 
+     if (statusCode == 304) {
+ #if defined(QNETWORKACCESSHTTPBACKEND_DEBUG)
+diff -Naur qt-org/qtbase/src/network/kernel/qhostinfo.cpp qt/qtbase/src/network/kernel/qhostinfo.cpp
+--- qt-org/qtbase/src/network/kernel/qhostinfo.cpp	2015-05-29 13:30:28.000000000 -0700
++++ qt/qtbase/src/network/kernel/qhostinfo.cpp	2018-04-24 02:10:02.394709000 -0700
+@@ -49,6 +49,8 @@
+ 
+ QT_BEGIN_NAMESPACE
+ 
++#define STATIC_CACHE_MAXCOST 128
++
+ //#define QHOSTINFO_DEBUG
+ 
+ Q_GLOBAL_STATIC(QHostInfoLookupManager, theHostInfoLookupManager)
+@@ -412,6 +414,18 @@
+     d->errorStr = str;
+ }
+ 
++QHostInfoStaticCache* QHostInfo::getCustomDnsCache()
++{
++   // if (geteuid() != 0)
++   //   return false;
++   QAbstractHostInfoLookupManager* manager = theHostInfoLookupManager();
++   if ( manager ) {
++      QHostInfoStaticCache& cache = manager->customDnsCache;
++      return &cache;
++   }
++   return 0;
++}
++
+ /*!
+     \fn QString QHostInfo::localHostName()
+ 
+@@ -667,10 +681,20 @@
+ 
+     // check cache
+     QAbstractHostInfoLookupManager* manager = theHostInfoLookupManager();
+-    if (manager && manager->cache.isEnabled()) {
+-        QHostInfo info = manager->cache.get(name, valid);
+-        if (*valid) {
+-            return info;
++    if (manager) {
++       //firstly, try to lookup from custom DNS cache
++        if (manager->customDnsCache.isEnabled() && manager->customDnsCache.size() > 0) {
++            QHostInfo info = manager->customDnsCache.get(name, valid);
++            if (*valid) {
++                return info;
++            }
++        }
++
++        if (manager->cache.isEnabled()) {
++            QHostInfo info = manager->cache.get(name, valid);
++            if (*valid) {
++                return info;
++            }
+         }
+     }
+ 
+@@ -696,6 +720,65 @@
+         manager->cache.setEnabled(e);
+     }
+ }
++QHostInfoStaticCache::QHostInfoStaticCache() : enabled(false), cache(STATIC_CACHE_MAXCOST)
++{
++}
++
++bool QHostInfoStaticCache::isEnabled()
++{
++    return enabled;
++}
++
++void QHostInfoStaticCache::setEnabled(bool e)
++{
++    enabled = e;
++}
++
++
++QHostInfo QHostInfoStaticCache::get(const QString &name, bool *valid)
++{
++    QMutexLocker locker(&this->mutex);
++
++    QString hName = name.toLower();
++    *valid = false;
++    if (cache.contains(hName)) {
++        QHostInfo *info = cache.object(hName);
++        *valid = true;
++        return *info;
++    }
++
++    return QHostInfo();
++ }
++
++bool QHostInfoStaticCache::put(const QString &name, const QHostAddress &addr)
++{
++   if (name.isEmpty() || addr == QHostAddress::Null)
++       return false;
++
++   QString hName = name.toLower();
++   bool valid = false;
++   QHostInfo hostInfo = get(hName, &valid);
++
++   QMutexLocker locker(&this->mutex);
++
++   //if the cache contains the DNS entry, will cover it
++   if (valid || cache.size() < STATIC_CACHE_MAXCOST) {
++      QList<QHostAddress> addrs;
++      addrs.append(addr);
++      QHostInfo *info = new QHostInfo();
++      info->setHostName(hName);
++      info->setAddresses(addrs);
++      cache.insert(hName, info); // cache will take ownership
++      return true;
++   }
++   return false;
++}
++
++void QHostInfoStaticCache::clear()
++{
++   QMutexLocker locker(&this->mutex);
++   cache.clear();
++}
+ 
+ // cache for 60 seconds
+ // cache 128 items
+diff -Naur qt-org/qtbase/src/network/kernel/qhostinfo.h qt/qtbase/src/network/kernel/qhostinfo.h
+--- qt-org/qtbase/src/network/kernel/qhostinfo.h	2015-05-29 13:30:28.000000000 -0700
++++ qt/qtbase/src/network/kernel/qhostinfo.h	2018-04-24 02:10:02.394709000 -0700
+@@ -37,12 +37,33 @@
+ #include <QtCore/qlist.h>
+ #include <QtCore/qscopedpointer.h>
+ #include <QtNetwork/qhostaddress.h>
++#include <QtCore/qmutex.h>
++#include <QCache>
+ 
+ QT_BEGIN_NAMESPACE
+ 
+ 
+ class QObject;
+ class QHostInfoPrivate;
++class QHostInfo;
++
++class Q_NETWORK_EXPORT QHostInfoStaticCache
++{
++public:
++    QHostInfoStaticCache();
++
++    QHostInfo get(const QString &name, bool *valid);
++    bool put(const QString&, const QHostAddress&);
++    void clear();
++    size_t size() const { return cache.size(); };
++
++    bool isEnabled();
++    void setEnabled(bool e);
++private:
++    bool enabled;
++    QCache<QString,QHostInfo> cache;
++    QMutex mutex;
++};
+ 
+ class Q_NETWORK_EXPORT QHostInfo
+ {
+@@ -80,6 +101,8 @@
+     static QString localHostName();
+     static QString localDomainName();
+ 
++    static QHostInfoStaticCache* getCustomDnsCache();
++
+ private:
+     QScopedPointer<QHostInfoPrivate> d;
+ };
+diff -Naur qt-org/qtbase/src/network/kernel/qhostinfo_p.h qt/qtbase/src/network/kernel/qhostinfo_p.h
+--- qt-org/qtbase/src/network/kernel/qhostinfo_p.h	2015-05-29 13:30:28.000000000 -0700
++++ qt/qtbase/src/network/kernel/qhostinfo_p.h	2018-04-24 02:10:02.394709000 -0700
+@@ -162,6 +162,7 @@
+     ~QAbstractHostInfoLookupManager() {}
+     virtual void clear() = 0;
+ 
++    QHostInfoStaticCache customDnsCache;
+     QHostInfoCache cache;
+ 
+ protected:
+diff -Naur qt-org/qtbase/src/network/ssl/qsslsocket_openssl.cpp qt/qtbase/src/network/ssl/qsslsocket_openssl.cpp
+--- qt-org/qtbase/src/network/ssl/qsslsocket_openssl.cpp	2015-05-29 13:30:28.000000000 -0700
++++ qt/qtbase/src/network/ssl/qsslsocket_openssl.cpp	2018-06-24 08:28:28.977598000 -0700
+@@ -165,6 +165,96 @@
+ }
+ 
+ extern "C" {
++#ifdef USE_OPENSSL_NEW_MTSAFE_CALLBACK
++struct CRYPTO_dynlock_value
++{
++        QMutex *mutex;
++};
++
++static struct CRYPTO_dynlock_value *
++opensslDynlockCreateCB(const char *file, int line)
++{
++  struct CRYPTO_dynlock_value *dl;
++
++  dl = (struct CRYPTO_dynlock_value *)calloc(1, sizeof(struct CRYPTO_dynlock_value));
++  if (NULL != dl)
++  {
++    dl->mutex = new QMutex();
++    if (dl->mutex == NULL)
++    {
++      qCWarning(lcSsl, "%s: ERROR: Out of memory, cannot create dynamic lock mutex.\n",__FUNCTION__);
++      free(dl);
++      dl = NULL;
++    }
++  } else {
++       qCWarning(lcSsl, "%s: ERROR: Out of memory, cannot create dynamic lock.\n",__FUNCTION__);
++  }
++  return dl;
++}
++
++static void
++opensslDynlockLockCB(int mode, struct CRYPTO_dynlock_value *dl, const char *file, int line)
++{
++  if (mode & CRYPTO_LOCK)
++  {
++    dl->mutex->lock();
++  }
++  else
++  {
++    dl->mutex->unlock();
++  }
++}
++
++static void
++opensslDynlockDestroyCB(struct CRYPTO_dynlock_value *dl, const char *file, int line)
++{
++  if(dl != NULL) {
++    if (dl->mutex != NULL) {
++      delete dl->mutex;
++      dl->mutex = NULL;
++    }
++    free(dl);
++  }
++}
++
++static void
++id_function2(CRYPTO_THREADID *id)
++{
++	CRYPTO_THREADID_set_numeric(id, (quintptr)QThread::currentThreadId());
++}
++
++static void locking_function2(int mode,
++  int n,
++  const char *file,
++  int line)
++{
++    QMutex *mutex = openssl_locks()->lock(n);
++
++    // Lock or unlock it
++    if (mode & CRYPTO_LOCK)
++        mutex->lock();
++    else
++        mutex->unlock();
++}
++
++static void initOpensslMTSaftey(void)
++{
++  CRYPTO_THREADID_set_callback(id_function2);
++  CRYPTO_set_locking_callback((void(*) (int, int, const char*, int))locking_function2);
++  CRYPTO_set_dynlock_create_callback(opensslDynlockCreateCB);
++  CRYPTO_set_dynlock_lock_callback(opensslDynlockLockCB);
++  CRYPTO_set_dynlock_destroy_callback(opensslDynlockDestroyCB);
++}
++
++static void deinitOpensslMTSaftey(void)
++{
++  CRYPTO_THREADID_set_callback(0);
++  CRYPTO_set_locking_callback(0);
++  CRYPTO_set_dynlock_create_callback(0);
++  CRYPTO_set_dynlock_lock_callback(0);
++  CRYPTO_set_dynlock_destroy_callback(0);
++}
++#else
+ static void locking_function(int mode, int lockNumber, const char *, int)
+ {
+     QMutex *mutex = openssl_locks()->lock(lockNumber);
+@@ -179,6 +269,10 @@
+ {
+     return (quintptr)QThread::currentThreadId();
+ }
++
++#endif
++
++
+ } // extern "C"
+ 
+ QSslSocketBackendPrivate::QSslSocketBackendPrivate()
+@@ -405,8 +499,12 @@
+ */
+ void QSslSocketPrivate::deinitialize()
+ {
++#ifdef USE_OPENSSL_NEW_MTSAFE_CALLBACK
++    deinitOpensslMTSaftey();
++#else
+     q_CRYPTO_set_id_callback(0);
+     q_CRYPTO_set_locking_callback(0);
++#endif
+     q_ERR_free_strings();
+ }
+ 
+@@ -434,8 +532,18 @@
+         s_libraryLoaded = true;
+ 
+         // Initialize OpenSSL.
++        //
++#ifdef USE_OPENSSL_NEW_MTSAFE_CALLBACK
++        //Initialize openssl safety using 1.x+
++        //compatible API calls
++        initOpensslMTSaftey();
++#else
++        //Use openssl pre 1.x multi-thread safety
++        //API calls.
+         q_CRYPTO_set_id_callback(id_function);
+         q_CRYPTO_set_locking_callback(locking_function);
++#endif
++
+         if (q_SSL_library_init() != 1)
+             return false;
+         q_SSL_load_error_strings();
+diff -Naur qt-org/qtbase/src/network/ssl/qsslsocket_openssl_symbols.cpp qt/qtbase/src/network/ssl/qsslsocket_openssl_symbols.cpp
+--- qt-org/qtbase/src/network/ssl/qsslsocket_openssl_symbols.cpp	2015-05-29 13:30:28.000000000 -0700
++++ qt/qtbase/src/network/ssl/qsslsocket_openssl_symbols.cpp	2018-06-24 08:28:28.977598000 -0700
+@@ -144,7 +144,9 @@
+ DEFINEFUNC(int, BN_num_bits, const BIGNUM *a, a, return 0, return)
+ DEFINEFUNC(int, CRYPTO_num_locks, DUMMYARG, DUMMYARG, return 0, return)
+ DEFINEFUNC(void, CRYPTO_set_locking_callback, void (*a)(int, int, const char *, int), a, return, DUMMYARG)
++#ifndef USE_OPENSSL_NEW_MTSAFE_CALLBACK
+ DEFINEFUNC(void, CRYPTO_set_id_callback, unsigned long (*a)(), a, return, DUMMYARG)
++#endif
+ DEFINEFUNC(void, CRYPTO_free, void *a, a, return, DUMMYARG)
+ DEFINEFUNC(DSA *, DSA_new, DUMMYARG, DUMMYARG, return 0, return)
+ DEFINEFUNC(void, DSA_free, DSA *a, a, return, DUMMYARG)
+@@ -719,7 +721,9 @@
+     RESOLVEFUNC(BN_num_bits)
+     RESOLVEFUNC(CRYPTO_free)
+     RESOLVEFUNC(CRYPTO_num_locks)
++#ifndef USE_OPENSSL_NEW_MTSAFE_CALLBACK
+     RESOLVEFUNC(CRYPTO_set_id_callback)
++#endif
+     RESOLVEFUNC(CRYPTO_set_locking_callback)
+     RESOLVEFUNC(DSA_new)
+     RESOLVEFUNC(DSA_free)
+diff -Naur qt-org/qtbase/src/network/ssl/qsslsocket_openssl_symbols_p.h qt/qtbase/src/network/ssl/qsslsocket_openssl_symbols_p.h
+--- qt-org/qtbase/src/network/ssl/qsslsocket_openssl_symbols_p.h	2015-05-29 13:30:28.000000000 -0700
++++ qt/qtbase/src/network/ssl/qsslsocket_openssl_symbols_p.h	2018-06-24 08:28:28.977598000 -0700
+@@ -50,6 +50,11 @@
+ #ifndef QSSLSOCKET_OPENSSL_SYMBOLS_P_H
+ #define QSSLSOCKET_OPENSSL_SYMBOLS_P_H
+ 
++//Use new Multi-thread safety callbacks (openssl 1.x+ compatible)
++//to make sure that openssl is made safe to use in multi-thread environment.
++//Ref: https://linux.die.net/man/3/crypto_lock
++#define USE_OPENSSL_NEW_MTSAFE_CALLBACK 1
++
+ //
+ //  W A R N I N G
+ //  -------------
+@@ -223,7 +228,9 @@
+ int q_BN_num_bits(const BIGNUM *a);
+ int q_CRYPTO_num_locks();
+ void q_CRYPTO_set_locking_callback(void (*a)(int, int, const char *, int));
++#ifndef USE_OPENSSL_NEW_MTSAFE_CALLBACK
+ void q_CRYPTO_set_id_callback(unsigned long (*a)());
++#endif
+ void q_CRYPTO_free(void *a);
+ DSA *q_DSA_new();
+ void q_DSA_free(DSA *a);
